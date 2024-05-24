@@ -1,0 +1,38 @@
+parameters: 
+  - name: logicAppName
+  - name: environment
+    default: 'Production'
+    values:
+    - 'Dev'
+    - 'Test'
+    - 'Production'
+
+jobs:
+  - deployment: deploy_logicapp_resources
+    displayName: Deploy Logic App Workflow
+    variables:
+    - name: logicAppCIArtifactName
+      value: 'logicapp_publish_artifact'
+    environment: 'Production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - task: DownloadBuildArtifacts@0
+              inputs:
+                buildType: 'current'
+                downloadType: 'single'
+                artifactName: '$(logicAppCIArtifactName)'
+                downloadPath: '$(System.DefaultWorkingDirectory)'
+            - script: |
+                pwd
+                ls -lrt
+            - task: AzureFunctionApp@1
+              displayName: 'Deploy logic app workflows'
+              inputs:
+                # TODO: Fill in with the name of your Azure service connection
+                azureSubscription: 'scon-cyber-001'
+                appType: 'functionApp'
+                appName: ${{ parameters.logicAppName }}
+                package: '$(System.DefaultWorkingDirectory)/**/*.zip' # '$(system.ArtifactsDirectory)/$(Build.BuildId).zip'
+                deploymentMethod: 'zipDeploy'

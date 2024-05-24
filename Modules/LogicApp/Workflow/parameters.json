@@ -1,0 +1,10 @@
+{
+    "pdnsSubscriptionId": {
+      "type": "String",
+      "value": "@appsetting('PDNS_SUBSCRIPTION_ID')"
+    },
+    "pdnsResourceGroupName": {
+      "type": "String",
+      "value": "@appsetting('PDNS_RESOURCE_GROUP_NAME')"
+    }
+  }

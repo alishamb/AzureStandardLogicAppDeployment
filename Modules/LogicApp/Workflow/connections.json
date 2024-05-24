@@ -1,0 +1,22 @@
+{
+    "managedApiConnections": {
+      "keyvault": {
+        "api": {
+          "id": "/subscriptions/@appsetting('WORKFLOWS_SUBSCRIPTION_ID')/providers/Microsoft.Web/locations/@appsetting('WORKFLOWS_LOCATION')/managedApis/keyvault"
+        },
+        "authentication": {
+          "type": "ManagedServiceIdentity"
+        },
+        "connection": {
+          "id": "/subscriptions/@appsetting('WORKFLOWS_SUBSCRIPTION_ID')/resourceGroups/@appsetting('WORKFLOWS_RESOURCE_GROUP_NAME')/providers/Microsoft.Web/connections/@appsetting('KEY_VAULT_CONNECTION_NAME')"
+        },
+        "connectionProperties": {
+          "authentication": {
+              "audience": "https://vault.azure.net",
+              "type": "ManagedServiceIdentity"
+          }
+        },
+        "connectionRuntimeUrl": "@appsetting('KEYVAULT_CONNECTION_RUNTIMEURL')"
+      }
+    }
+}

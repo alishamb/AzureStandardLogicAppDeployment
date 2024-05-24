@@ -1,0 +1,60 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "value": "eastus"
+        },
+          "logicAppName": {
+            "value": "automated-logic-app-002"
+        },
+        "serverFarm": {
+            "value": {
+                "sku": {
+                            "name": "WS2",
+                            "tier": "WorkflowStandard",
+                            "size": "WS2",
+                            "family": "WS",
+                            "capacity": 1
+                        },
+                "zoneRedundant": false
+            }
+        },
+        "pdns": {
+            "value": {
+                "subscriptionId": "",
+                "resourceGroupName": "automationresources"
+            }
+        },
+        "keyVault": {
+            "value": {
+                "name": "logic-app-kv-0033",
+                "subscriptionID": "",
+                "resourceGroupName": "POC-Logic-App-Bicep"
+            }
+        },
+        "storageAccount": {
+            "value": {
+                "name": "poclogicappbicepbb36"
+            }
+        },
+        "vnet": {
+            "value": {
+                "subscriptionId": "",
+                "resourceGroupName": "poc-test-resources",
+                "name": "vnet-core-001",
+                "subnetName": "snet-outbound"
+            }
+        },
+        "logicAppPrivateEndpoint": {
+            "value": "logic-app-pe"
+        },
+        "keyvaultConnectionName": {
+            "value": "automation-key-vault-connection-02"
+        },
+        "appServicePlanName": {
+            "value": "logic-app-serverfarm"
+        }
+        
+    }
+}

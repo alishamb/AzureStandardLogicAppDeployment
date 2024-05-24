@@ -1,0 +1,301 @@
+pr: none
+trigger: none
+
+pool:
+  name: logicapp-vmss-agent-pool-01
+
+
+parameters: 
+  - name : automationResourceGroupName
+    displayName: 'Automation Resource Group Name'
+    default: AutomationResources
+  - name : automationKeyVaultName
+    displayName: 'Automation Key Vault Name'
+    default: automationresource
+  - name: logicAppName
+    default: 'automated-logic-app-002'
+    displayName: 'Name of Logic App'
+  - name: logicAppLocation
+    displayName: 'Tenant, Subscription and RG of Logic App'
+    type: object
+    default:
+      name: "cyber-la"
+      resourceGroup: "POC-Logic-App-Bicep"
+      subscriptionID: ""
+  - name: location
+    displayName: Location
+    default: "eastus"
+  - name: laKeyVault
+    displayName: 'Name of Key Vault for Logic App'
+    default: "logic-app-kv-0033"
+  - name: requiredAction
+    displayName: 'Task to Perform'
+    default: 'Deploy Logic App and Workflow(s)'
+    values: 
+    - 'Deploy Only Logic App Infrastructure'
+    - 'Deploy Logic App and Workflow(s)'
+    - 'Deploy Only Workflow(s)'
+  - name: namesCXO
+    displayName: 'Name of Workflows'
+    type: object
+    default:
+    - wf-cxo-a-record
+    - wf-CXOTheThird-a-record
+    
+name: 'LOGICAPPS_DEPLOY_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)'
+
+variables:
+- name: logicAppCIArtifactName
+  value: 'logicapp_publish_artifact'
+- name: environment
+  value: 'Production'
+- name: ipList
+  ${{ if eq(parameters.location, 'eastus') }}:
+    value: "20.88.153.192/27 40.71.249.139/32 40.71.249.205/32 40.114.40.132/32 52.151.221.184/32 52.151.221.119/32 40.71.15.160/27 20.88.153.176/28 40.71.11.80/28 52.188.157.160/32 52.151.220.217/32 20.62.210.48/32"
+  ${{ if eq(parameters.location, 'westus') }}:
+    value: "13.93.148.62/32, 104.42.122.49/32, 40.112.195.87/32, 13.86.223.32/26, 40.112.243.160/28, 20.59.77.0/27, 20.66.6.112/28, 20.245.53.38/32, 20.245.49.8/32" 
+
+
+stages:
+- stage: Build
+  displayName: Build bicep code
+  condition: ${{ or(eq(parameters.requiredAction, 'Deploy Only Logic App Infrastructure'), eq(parameters.requiredAction, 'Deploy Logic App and Workflow(s)')) }}  
+  jobs:
+  - job: build_bicep_code
+    displayName: Build bicep code
+    steps:
+    - checkout: self
+    - pwsh: |
+        Get-ChildItem -Path $(Build.SourcesDirectory) -Filter *.bicep | foreach { az bicep build -f $_.FullName }
+      displayName: 'Run Bicep linter'  
+- stage: AzureKeyvault
+  displayName: 'Fetch_secrets'
+  condition: ${{ or(eq(parameters.requiredAction, 'Deploy Only Logic App Infrastructure'), eq(parameters.requiredAction, 'Deploy Logic App and Workflow(s)')) }}  
+  jobs:
+  - job: secretsfetch
+    displayName: secretsfetch
+    steps:
+          - checkout: self
+          - pwsh: |
+                  Install-Module -Name Az -Repository PSGallery -Force
+                  Import-Module Az.Accounts
+          - task: AzurePowerShell@5
+            name: akvsecretgenerate
+            inputs:
+              azureSubscription: 'SPN-core1'
+              ScriptType: 'InlineScript'
+              Inline: |
+                $resourceGroupName = "${{ parameters.automationResourceGroupName }}"
+                $keyVaultName =  "${{ parameters.automationKeyVaultName }}"  
+                $clientIDSecretName = "clientid-${{ parameters.logicAppLocation.name }}"
+                Write-Host "$clientIDSecretName"
+                $clientSecretSecretName = "clientsecret-${{ parameters.logicAppLocation.name }}"
+                $tenantIDSecretName = "tenantid-${{ parameters.logicAppLocation.name }}"                  
+                # Authenticate to Azure and fetch secrets from Key Vault
+                $keyVaultSecrets = @{
+                    "clientid" = Get-AzKeyVaultSecret -VaultName $keyVaultName -Name $clientIDSecretName -AsPlainText   
+                    "clientsecret" = Get-AzKeyVaultSecret -VaultName $keyVaultName -Name $clientSecretSecretName -AsPlainText   
+                    "tenantid" = Get-AzKeyVaultSecret -VaultName $keyVaultName -Name $tenantIDSecretName -AsPlainText   
+                }        
+                $clientid =  $($keyVaultSecrets['clientid']) 
+                $clientsecret = $($keyVaultSecrets['clientsecret'])
+                $tenantid =  $($keyVaultSecrets['tenantid'])       
+                Write-Host "##vso[task.setvariable variable=clientid;isOutput=true]$clientid"
+                Write-Host "##vso[task.setvariable variable=clientsecret;isOutput=true]$clientsecret"
+                Write-Host "##vso[task.setvariable variable=tenantid;isOutput=true]$tenantid"
+              FailOnStandardError: true
+              azurePowerShellVersion: 'LatestVersion'
+          - task: CopyFiles@2
+            inputs:
+              SourceFolder: '$(Build.SourcesDirectory)'
+              Contents: '**'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(System.DefaultWorkingDirectory)'
+              artifact: infraartifact
+- stage: TEST_WHATIF
+  displayName: 'What_if_condition'
+  condition: ${{ or(eq(parameters.requiredAction, 'Deploy Only Logic App Infrastructure'), eq(parameters.requiredAction, 'Deploy Logic App and Workflow(s)')) }}  
+  dependsOn: 
+    - AzureKeyvault
+  variables:
+      clientid: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.clientid']] 
+      clientsecret: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.clientsecret']]
+      tenantid: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.tenantid']]
+  jobs:
+  - job: secretsfetch
+    displayName: validate
+    steps:
+    - checkout: self
+    - task: DownloadBuildArtifacts@0
+      inputs:
+          buildType: 'current'
+          downloadType: 'single'
+          artifactName: 'infraartifact'
+          downloadPath: '$(system.ArtifactsDirectory)'
+    - task: Bash@3
+      displayName: WhatIf Bicep templates for Standard Logic Apps in ${{ parameters.logicAppLocation.name }} 
+      enabled: true
+      inputs:
+        targetType: 'inline'
+        script: |  
+          set -x
+          ls -la
+          az --version
+          echo $(clientid)
+          az login --service-principal -u $(clientid) -p $(clientsecret)  --tenant $(tenantid)
+          az account set --subscription ${{ parameters.logicAppLocation.subscriptionID}}
+          az deployment group what-if --name bicepwhat-if --template-file logicAppResources.bicep --parameters ./parameters/parameters.standard.json --resource-group ${{ parameters.logicAppLocation.resourceGroup }} --verbose
+        workingDirectory: '$(System.DefaultWorkingDirectory)/LandingZone/LogicApp'
+
+- stage: KeyVaultNetworkRules
+  displayName: 'Whitelist East US IPs in KV'
+  dependsOn: 
+    - AzureKeyvault
+  condition: ${{ or(eq(parameters.requiredAction, 'Deploy Only Logic App Infrastructure'), eq(parameters.requiredAction, 'Deploy Logic App and Workflow(s)')) }}
+  variables:
+    clientid: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.clientid']]
+    clientsecret: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.clientsecret']]
+    tenantid: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.tenantid']]
+  jobs:
+  - deployment: networkRules
+    environment: $(environment)
+    displayName: AddRules
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+            - task: Bash@3
+              displayName: Add Network Rules to Key Vault used by Logic Apps
+              enabled: true
+              inputs:
+                targetType: 'inline'
+                script: |  
+                  set -x
+                  ls -la
+                  az --version
+                  echo $(clientid)
+                  az login --service-principal -u $(clientid) -p $(clientsecret) --tenant $(tenantid)
+                  az account set --subscription ${{ parameters.logicAppLocation.subscriptionID }}
+                  az keyvault network-rule add --name ${{ parameters.laKeyVault }} --ip-address $(ipList)
+- stage: Deploy
+  displayName: 'Infrastructure Deployment'
+  condition: ${{ or(eq(parameters.requiredAction, 'Deploy Only Logic App Infrastructure'), eq(parameters.requiredAction, 'Deploy Logic App and Workflow(s)')) }}  
+  variables:
+    clientid: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.clientid']]
+    clientsecret: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.clientsecret']]
+    tenantid: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.tenantid']]
+  dependsOn: 
+    - AzureKeyvault
+    - TEST_WHATIF
+    - KeyVaultNetworkRules
+  jobs:
+  - deployment: whatif
+    environment: $(environment)
+    displayName: validation
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+            - task: DownloadBuildArtifacts@0
+              inputs:
+                buildType: 'current'
+                downloadType: 'single'
+                artifactName: 'infraartifact'
+                downloadPath: '$(system.ArtifactsDirectory)'
+            - task: Bash@3
+              displayName: Infrastructure Deployment for Standard Logic Apps in ${{ parameters.logicAppLocation.name }}
+              enabled: true
+              inputs:
+                targetType: 'inline'
+                script: |  
+                    set -x
+                    ls -la
+                    az --version
+                    echo $(clientid)
+                    az login --service-principal -u $(clientid) -p $(clientsecret)  --tenant $(tenantid)
+                    az account set --subscription ${{ parameters.logicAppLocation.subscriptionID}}
+                    az deployment group create --name logic-apps-resources --template-file logicAppResources.bicep --parameters ./parameters/parameters.standard.json --resource-group ${{ parameters.logicAppLocation.resourceGroup}} --verbose
+                workingDirectory: '$(System.DefaultWorkingDirectory)/LandingZone/LogicApp'
+- stage: CreateWorkflow
+  condition: ${{ eq(parameters.requiredAction, 'Deploy Logic App and Workflow(s)') }}
+  dependsOn: 
+    - Deploy
+  displayName: 'Generate Workflow Files'
+  jobs:
+    - template: Templates/logic_apps_ci.yml
+      parameters:
+          cxoNames: ${{ parameters.namesCXO }}
+- stage: ConfirmLogicAppCreation
+  displayName: 'Confirm Creation of Logic App'
+  condition: ${{ or(eq(parameters.requiredAction, 'Deploy Only Logic App Infrastructure'), eq(parameters.requiredAction, 'Deploy Logic App and Workflow(s)')) }}  
+  variables:
+    clientid: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.clientid']]
+    clientsecret: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.clientsecret']]
+    tenantid: $[stageDependencies.AzureKeyvault.secretsfetch.outputs['akvsecretgenerate.tenantid']]
+  dependsOn: 
+    - Deploy
+    - AzureKeyvault
+  jobs:
+  - job: confirmlogicappexists
+    displayName: validation
+    steps:
+      - checkout: self
+      - task: DownloadBuildArtifacts@0
+        inputs:
+          buildType: 'current'
+          downloadType: 'single'
+          artifactName: 'infraartifact'
+          downloadPath: '$(system.ArtifactsDirectory)'
+      - task: Bash@3
+        displayName: Confirm Creation of  ${{ parameters.logicAppName }}
+        enabled: true
+        inputs:
+          targetType: 'inline'
+          script: |  
+              set -x
+              ls -la
+              az --version
+              echo $(clientid)
+              az login --service-principal -u $(clientid) -p $(clientsecret)  --tenant $(tenantid)
+              az account set --subscription ${{ parameters.logicAppLocation.subscriptionID}}
+              output='empty'
+              echo $output;
+              while [ "$output" != "${{ parameters.logicAppName }}" ]
+              do
+                  output=$(az logicapp list --query "[?name=='${{ parameters.logicAppName }}'] | [0].name" --resource-group  ${{ parameters.logicAppLocation.resourceGroup }} --output tsv)
+                  echo $output;
+              done
+          workingDirectory: '$(System.DefaultWorkingDirectory)/LandingZone/LogicApp'
+- stage: DeployWorkflow
+  displayName: 'Deploy Workflow(s)'
+  condition: ${{ eq(parameters.requiredAction, 'Deploy Logic App and Workflow(s)') }}
+  dependsOn:
+    - Deploy
+    - CreateWorkflow
+    - ConfirmLogicAppCreation
+  jobs:
+    - template: "Templates/logic_apps_workflow_deploy_job.yml"
+      parameters:
+          logicAppName: ${{ parameters.logicAppName }}
+          environment: ${{ variables.environment }}
+- stage: CreateOnlyWorkflow
+  condition: ${{ eq(parameters.requiredAction, 'Deploy Only Workflow(s)') }}
+  displayName: 'Generate Only Workflow Files'
+  jobs:
+    - template: Templates/logic_apps_ci.yml
+      parameters:
+          cxoNames: ${{ parameters.namesCXO }}
+- stage: DeployOnlyWorkflow
+  displayName: 'Deploy Only Workflow(s)'
+  condition: ${{ eq(parameters.requiredAction, 'Deploy Only Workflow(s)') }}
+  dependsOn: 
+    - CreateOnlyWorkflow
+  jobs:
+    - template: "Templates/logic_apps_workflow_deploy_job.yml"
+      parameters:
+          logicAppName: ${{ parameters.logicAppName }}
+          environment: ${{ variables.environment }}

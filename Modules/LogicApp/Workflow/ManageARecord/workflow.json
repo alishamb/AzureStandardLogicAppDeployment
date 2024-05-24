@@ -1,0 +1,590 @@
+{
+  "definition": {
+      "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+      "actions": {
+          "For_each": {
+              "actions": {
+                  "Set_A_Record": {
+                      "inputs": "@items('For_each')?['arecord']",
+                      "type": "Compose"
+                  },
+                  "Set_Add_or_Remove_A_Record": {
+                      "inputs": "@items('For_each')?['fqdnchangetype']",
+                      "runAfter": {
+                          "Set_PDNS": [
+                              "SUCCEEDED"
+                          ]
+                      },
+                      "type": "Compose"
+                  },
+                  "Set_IP_Address": {
+                      "inputs": "@items('For_each')?['ipvalue']",
+                      "runAfter": {
+                          "Set_A_Record": [
+                              "SUCCEEDED"
+                          ]
+                      },
+                      "type": "Compose"
+                  },
+                  "Set_PDNS": {
+                    "inputs": "@replace(replace(replace(concat(\r\n \r\n         'privatelink'\r\n \r\n        ,substring(items('For_each')?['fqdnvalue']\r\n        ,indexOf(items('For_each')?['fqdnvalue']   ,'.')\r\n        , sub(length(items('For_each')?['fqdnvalue']) , indexOf(items('For_each')?['fqdnvalue']\r\n        ,'.') )\r\n        )\r\n        )\r\n        ,'\"','')\r\n        ,']','')\r\n        ,'.vault.','.vaultcore.')",
+                      "runAfter": {
+                          "Set_IP_Address": [
+                              "SUCCEEDED"
+                          ]
+                      },
+                      "type": "Compose"
+                  },
+                  "Verify_A_Record": {
+                      "actions": {
+                          "Check_A_record_before_Adding": {
+                              "inputs": {
+                                  "authentication": {
+                                      "audience": "https://management.core.windows.net/",
+                                      "authority": "https://login.microsoftonline.com",
+                                      "clientId": "@{body('Get_A_record_Client_ID')?['value']}",
+                                      "secret": "@{body('Get_A_record_Secret')?['value']}",
+                                      "tenant": "@{body('Get_Core_Tenant_ID_A_record_registration')?['value']}",
+                                      "type": "ActiveDirectoryOAuth"
+                                  },
+                                  "body": {
+                                      "query": "dnsresources | extend ipadd = properties.records[0].ipv4Address, name | where type == 'microsoft.network/privatednszones/a' | where name == '@{outputs('Set_A_Record')}' and  ipadd == '@{outputs('Set_IP_Address')}' | summarize recordexist = count()"
+                                  },
+                                  "headers": {
+                                      "Content-Type": "application/json"
+                                  },
+                                  "method": "POST",
+                                  "queries": {
+                                      "api-version": "2021-03-01"
+                                  },
+                                  "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources"
+                              },
+                              "runtimeConfiguration": {
+                                  "contentTransfer": {
+                                      "transferMode": "Chunked"
+                                  }
+                              },
+                              "type": "Http"
+                          },
+                          "For_each_add_A_record": {
+                              "actions": {
+                                  "Adding_A_Record": {
+                                      "actions": {
+                                          "Add_A_record": {
+                                              "inputs": {
+                                                  "authentication": {
+                                                      "audience": "https://management.core.windows.net/",
+                                                      "authority": "https://login.microsoftonline.com",
+                                                      "clientId": "@{body('Get_A_record_Client_ID')?['value']}",
+                                                      "secret": "@{body('Get_A_record_Secret')?['value']}",
+                                                      "tenant": "@{body('Get_Core_Tenant_ID_A_record_registration')?['value']}",
+                                                      "type": "ActiveDirectoryOAuth"
+                                                  },
+                                                  "body": {
+                                                      "properties": {
+                                                          "aRecords": [
+                                                              {
+                                                                  "ipv4Address": "@{outputs('Set_IP_Address')}"
+                                                              }
+                                                          ],
+                                                          "metadata": {
+                                                              "key1": "value1"
+                                                          },
+                                                          "ttl": 3600
+                                                      }
+                                                  },
+                                                  "headers": {
+                                                      "Content-Type": "application/json"
+                                                  },
+                                                  "method": "PUT",
+                                                  "uri": "https://management.azure.com/subscriptions/@{parameters('pdnsSubscriptionId')}/resourceGroups/@{parameters('pdnsResourceGroupName')}/providers/Microsoft.Network/privateDnsZones/@{outputs('Set_PDNS')}/A/@{outputs('Set_A_Record')}?api-version=2018-09-01"
+                                              },
+                                              "runtimeConfiguration": {
+                                                  "contentTransfer": {
+                                                      "transferMode": "Chunked"
+                                                  }
+                                              },
+                                              "type": "Http"
+                                          }
+                                      },
+                                      "else": {
+                                          "actions": {}
+                                      },
+                                      "expression": {
+                                          "and": [
+                                              {
+                                                  "equals": [
+                                                      "@items('For_each_add_A_record')?['recordexist']",
+                                                      0
+                                                  ]
+                                              }
+                                          ]
+                                      },
+                                      "type": "If"
+                                  }
+                              },
+                              "foreach": "@outputs('Parse_JSON_-_Add_record_check')?['body']?['data']",
+                              "runAfter": {
+                                  "Parse_JSON_-_Add_record_check": [
+                                      "SUCCEEDED"
+                                  ]
+                              },
+                              "type": "foreach"
+                          },
+                          "Parse_JSON_-_Add_record_check": {
+                              "inputs": {
+                                  "content": "@body('Check_A_record_before_Adding')",
+                                  "schema": {
+                                      "properties": {
+                                          "count": {
+                                              "type": "integer"
+                                          },
+                                          "data": {
+                                              "items": {
+                                                  "properties": {
+                                                      "recordexist": {
+                                                          "type": "integer"
+                                                      }
+                                                  },
+                                                  "required": [
+                                                      "recordexist"
+                                                  ],
+                                                  "type": "object"
+                                              },
+                                              "type": "array"
+                                          },
+                                          "facets": {
+                                              "type": "array"
+                                          },
+                                          "resultTruncated": {
+                                              "type": "string"
+                                          },
+                                          "totalRecords": {
+                                              "type": "integer"
+                                          }
+                                      },
+                                      "type": "object"
+                                  }
+                              },
+                              "runAfter": {
+                                  "Check_A_record_before_Adding": [
+                                      "SUCCEEDED"
+                                  ]
+                              },
+                              "type": "ParseJson"
+                          }
+                      },
+                      "else": {
+                          "actions": {
+                              "Check_before_Removing_A_Record": {
+                                  "actions": {
+                                      "Check_A_record_before_deleting": {
+                                          "inputs": {
+                                              "authentication": {
+                                                  "audience": "https://management.core.windows.net/",
+                                                  "authority": "https://login.microsoftonline.com",
+                                                  "clientId": "@{body('Get_A_record_Client_ID')?['value']}",
+                                                  "secret": "@{body('Get_A_record_Secret')?['value']}",
+                                                  "tenant": "@{body('Get_Core_Tenant_ID_A_record_registration')?['value']}",
+                                                  "type": "ActiveDirectoryOAuth"
+                                              },
+                                              "body": {
+                                                  "query": "dnsresources | extend ipadd = properties.records[0].ipv4Address, name | where type == 'microsoft.network/privatednszones/a' | where name == '@{outputs('Set_A_Record')}' and  ipadd == '@{outputs('Set_IP_Address')}' | summarize recordexist = count()"
+                                              },
+                                              "headers": {
+                                                  "Content-Type": "application/json"
+                                              },
+                                              "method": "POST",
+                                              "queries": {
+                                                  "api-version": "2021-03-01"
+                                              },
+                                              "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources"
+                                          },
+                                          "runtimeConfiguration": {
+                                              "contentTransfer": {
+                                                  "transferMode": "Chunked"
+                                              }
+                                          },
+                                          "type": "Http"
+                                      },
+                                      "For_each_remove_A_record": {
+                                          "actions": {
+                                              "Removing_A_Record": {
+                                                  "actions": {
+                                                      "Remove_A_Record": {
+                                                          "inputs": {
+                                                              "authentication": {
+                                                                  "audience": "https://management.core.windows.net/",
+                                                                  "authority": "https://login.microsoftonline.com",
+                                                                  "clientId": "@{body('Get_A_record_Client_ID')?['value']}",
+                                                                  "secret": "@{body('Get_A_record_Secret')?['value']}",
+                                                                  "tenant": "@{body('Get_Core_Tenant_ID_A_record_registration')?['value']}",
+                                                                  "type": "ActiveDirectoryOAuth"
+                                                              },
+                                                              "method": "DELETE",
+                                                              "uri": "https://management.azure.com/subscriptions/@{parameters('pdnsSubscriptionId')}/resourceGroups/@{parameters('pdnsResourceGroupName')}/providers/Microsoft.Network/privateDnsZones/@{outputs('Set_PDNS')}/A/@{outputs('Set_A_Record')}?api-version=2018-09-01"
+                                                          },
+                                                          "runtimeConfiguration": {
+                                                              "contentTransfer": {
+                                                                  "transferMode": "Chunked"
+                                                              }
+                                                          },
+                                                          "type": "Http"
+                                                      }
+                                                  },
+                                                  "else": {
+                                                      "actions": {}
+                                                  },
+                                                  "expression": {
+                                                      "and": [
+                                                          {
+                                                              "greater": [
+                                                                  "@items('For_each_remove_A_record')?['recordexist']",
+                                                                  0
+                                                              ]
+                                                          }
+                                                      ]
+                                                  },
+                                                  "type": "If"
+                                              }
+                                          },
+                                          "foreach": "@outputs('Parse_output_for_deleting_A_record')?['body']?['data']",
+                                          "runAfter": {
+                                              "Parse_output_for_deleting_A_record": [
+                                                  "SUCCEEDED"
+                                              ]
+                                          },
+                                          "type": "foreach"
+                                      },
+                                      "Parse_output_for_deleting_A_record": {
+                                          "inputs": {
+                                              "content": "@body('Check_A_record_before_deleting')",
+                                              "schema": {
+                                                  "properties": {
+                                                      "count": {
+                                                          "type": "integer"
+                                                      },
+                                                      "data": {
+                                                          "items": {
+                                                              "properties": {
+                                                                  "recordexist": {
+                                                                      "type": "integer"
+                                                                  }
+                                                              },
+                                                              "required": [
+                                                                  "recordexist"
+                                                              ],
+                                                              "type": "object"
+                                                          },
+                                                          "type": "array"
+                                                      },
+                                                      "facets": {
+                                                          "type": "array"
+                                                      },
+                                                      "resultTruncated": {
+                                                          "type": "string"
+                                                      },
+                                                      "totalRecords": {
+                                                          "type": "integer"
+                                                      }
+                                                  },
+                                                  "type": "object"
+                                              }
+                                          },
+                                          "runAfter": {
+                                              "Check_A_record_before_deleting": [
+                                                  "SUCCEEDED"
+                                              ]
+                                          },
+                                          "type": "ParseJson"
+                                      }
+                                  },
+                                  "else": {
+                                      "actions": {}
+                                  },
+                                  "expression": {
+                                      "and": [
+                                          {
+                                              "equals": [
+                                                  "@outputs('Set_Add_or_Remove_A_Record')",
+                                                  "Remove"
+                                              ]
+                                          }
+                                      ]
+                                  },
+                                  "type": "If"
+                              }
+                          }
+                      },
+                      "expression": {
+                          "and": [
+                              {
+                                  "equals": [
+                                      "@outputs('Set_Add_or_Remove_A_Record')",
+                                      "Insert"
+                                  ]
+                              }
+                          ]
+                      },
+                      "runAfter": {
+                          "Set_Add_or_Remove_A_Record": [
+                              "SUCCEEDED"
+                          ]
+                      },
+                      "type": "If"
+                  }
+              },
+              "foreach": "@outputs('Parse_cxo_query_output')?['body']?['data']",
+              "runAfter": {
+                  "Parse_cxo_query_output": [
+                      "SUCCEEDED"
+                  ]
+              },
+              "type": "foreach"
+          },
+          "Get_CXO_Client_Secret": {
+              "inputs": {
+                  "host": {
+                      "connection": {
+                          "referenceName": "keyvault"
+                      }
+                  },
+                  "method": "get",
+                  "path": "/secrets/@{encodeURIComponent('SPN-CXO-ARecordLogicApp')}/value"
+              },
+              "runAfter": {
+                  "Get_CXO_Client_ID": [
+                      "SUCCEEDED"
+                  ]
+              },
+              "runtimeConfiguration": {
+                  "secureData": {
+                      "properties": [
+                          "inputs",
+                          "outputs"
+                      ]
+                  }
+              },
+              "type": "ApiConnection"
+          },
+          "Get_CXO_Client_ID": {
+              "inputs": {
+                  "host": {
+                      "connection": {
+                          "referenceName": "keyvault"
+                      }
+                  },
+                  "method": "get",
+                  "path": "/secrets/@{encodeURIComponent('SPN-CXO-ARecordLogicApp-cid')}/value"
+              },
+              "runAfter": {
+                  "Get_CXO_Tenant_ID": [
+                      "SUCCEEDED"
+                  ]
+              },
+              "runtimeConfiguration": {
+                  "secureData": {
+                      "properties": [
+                          "inputs",
+                          "outputs"
+                      ]
+                  }
+              },
+              "type": "ApiConnection"
+          },
+          "Get_CXO_Tenant_ID": {
+              "inputs": {
+                  "host": {
+                      "connection": {
+                          "referenceName": "keyvault"
+                      }
+                  },
+                  "method": "get",
+                  "path": "/secrets/@{encodeURIComponent('CXO-TenantId')}/value"
+              },
+              "runAfter": {},
+              "type": "ApiConnection"
+          },
+          "Get_Core_Tenant_ID_A_record_registration": {
+              "inputs": {
+                  "host": {
+                      "connection": {
+                          "referenceName": "keyvault"
+                      }
+                  },
+                  "method": "get",
+                  "path": "/secrets/@{encodeURIComponent('Core-TenantId')}/value"
+              },
+              "runAfter": {
+                  "Get_CXO_Client_Secret": [
+                      "SUCCEEDED"
+                  ]
+              },
+              "runtimeConfiguration": {
+                  "secureData": {
+                      "properties": [
+                          "inputs",
+                          "outputs"
+                      ]
+                  }
+              },
+              "type": "ApiConnection"
+          },
+          "Get_A_record_Client_ID": {
+              "inputs": {
+                  "host": {
+                      "connection": {
+                          "referenceName": "keyvault"
+                      }
+                  },
+                  "method": "get",
+                  "path": "/secrets/@{encodeURIComponent('SPN-Core-ARecordRegistration-cid')}/value"
+              },
+              "runAfter": {
+                "Get_Core_Tenant_ID_A_record_registration": [
+                      "SUCCEEDED"
+                  ]
+              },
+              "runtimeConfiguration": {
+                  "secureData": {
+                      "properties": [
+                          "inputs",
+                          "outputs"
+                      ]
+                  }
+              },
+              "type": "ApiConnection"
+          },
+          "Get_A_record_Secret": {
+              "inputs": {
+                  "host": {
+                      "connection": {
+                          "referenceName": "keyvault"
+                      }
+                  },
+                  "method": "get",
+                  "path": "/secrets/@{encodeURIComponent('SPN-Core-ARecordRegistration')}/value"
+              },
+              "runAfter": {
+                  "Get_A_record_Client_ID": [
+                      "SUCCEEDED"
+                  ]
+              },
+              "runtimeConfiguration": {
+                  "secureData": {
+                      "properties": [
+                          "inputs",
+                          "outputs"
+                      ]
+                  }
+              },
+              "type": "ApiConnection"
+          },
+          "HTTP_-_Query_CXO_Tenant": {
+              "inputs": {
+                  "authentication": {
+                      "audience": "https://management.core.windows.net/",
+                      "authority": "https://login.microsoftonline.com",
+                      "clientId": "@{body('Get_CXO_Client_ID')?['value']}",
+                      "secret": "@{body('Get_CXO_Client_Secret')?['value']}",
+                      "tenant": "@{body('Get_CXO_Tenant_ID')?['value']}",
+                      "type": "ActiveDirectoryOAuth"
+                  },
+                  "body": {
+                      "query": "resourcechanges | project rtype = (properties.targetResourceType) ,ipchangetype = (properties.changes['properties.customDnsConfigs[0].ipAddresses[0]'].propertyChangeType) ,ipprevvalue = (properties.changes['properties.customDnsConfigs[0].ipAddresses[0]']. previousValue) ,ipnewvalue = (properties.changes['properties.customDnsConfigs[0].ipAddresses[0]']. newValue) ,fqdnchangetype =(properties.changes['properties.customDnsConfigs[0].fqdn'].propertyChangeType) ,fqdnprevvalue =(properties.changes['properties.customDnsConfigs[0].fqdn'].previousValue) ,fqdnnewvalue =(properties.changes['properties.customDnsConfigs[0].fqdn'].newValue) , timestamp = todatetime(properties.changeAttributes.timestamp) | extend ipvalue = iff(ipchangetype == 'Insert' , ipnewvalue, ipprevvalue) | extend fqdnvalue = iff(fqdnchangetype == 'Insert' , fqdnnewvalue, fqdnprevvalue) | extend arecord = split(fqdnvalue,'.')[0] | where timestamp > ago(1h) | where rtype=='microsoft.network/privateendpoints' | where ipchangetype == 'Remove' or ipchangetype == 'Insert' | project ipchangetype,ipvalue, fqdnchangetype, fqdnvalue, arecord"
+                  },
+                  "headers": {
+                      "Content-Type": "application/json"
+                  },
+                  "method": "POST",
+                  "queries": {
+                      "api-version": "2021-03-01"
+                  },
+                  "uri": "https://management.azure.com/providers/Microsoft.ResourceGraph/resources"
+              },
+              "runAfter": {
+                  "Get_A_record_Secret": [
+                      "SUCCEEDED"
+                  ]
+              },
+              "runtimeConfiguration": {
+                  "contentTransfer": {
+                      "transferMode": "Chunked"
+                  }
+              },
+              "type": "Http"
+          },
+          "Parse_cxo_query_output": {
+              "inputs": {
+                  "content": "@body('HTTP_-_Query_CXO_Tenant')",
+                  "schema": {
+                      "properties": {
+                          "count": {
+                              "type": "integer"
+                          },
+                          "data": {
+                              "items": {
+                                  "properties": {
+                                      "arecord": {
+                                          "type": "string"
+                                      },
+                                      "fqdnchangetype": {
+                                          "type": "string"
+                                      },
+                                      "fqdnvalue": {
+                                          "type": "string"
+                                      },
+                                      "ipchangetype": {
+                                          "type": "string"
+                                      },
+                                      "ipvalue": {
+                                          "type": "string"
+                                      }
+                                  },
+                                  "required": [
+                                      "ipchangetype",
+                                      "ipvalue",
+                                      "fqdnchangetype",
+                                      "fqdnvalue",
+                                      "arecord"
+                                  ],
+                                  "type": "object"
+                              },
+                              "type": "array"
+                          },
+                          "facets": {
+                              "type": "array"
+                          },
+                          "resultTruncated": {
+                              "type": "string"
+                          },
+                          "totalRecords": {
+                              "type": "integer"
+                          }
+                      },
+                      "type": "object"
+                  }
+              },
+              "runAfter": {
+                  "HTTP_-_Query_CXO_Tenant": [
+                      "SUCCEEDED"
+                  ]
+              },
+              "type": "ParseJson"
+          }
+      },
+      "contentVersion": "1.0.0.0",
+      "outputs": {},
+      "triggers": {
+          "Recurrence": {
+              "recurrence": {
+                  "frequency": "Minute",
+                  "interval": 15,
+                  "timeZone": "Eastern Standard Time"
+              },
+              "type": "Recurrence"
+          }
+      }
+  },
+  "kind": "Stateful"
+}

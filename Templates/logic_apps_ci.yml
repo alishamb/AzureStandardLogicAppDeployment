@@ -1,0 +1,76 @@
+parameters:
+  - name: cxoNames
+    type: object
+    default:
+    - cxo
+    - CXOTheThird
+    
+jobs:
+- job: build_logic_app_workflow
+  displayName: 'Build Logic app'
+  variables:
+  - name: logicAppCIArtifactName
+    value: 'logicapp_publish_artifact'
+  steps:
+  - checkout: self
+  - task: CopyFiles@2
+    displayName: 'Create project folder'
+    inputs:
+      SourceFolder: '$(System.DefaultWorkingDirectory)/Modules/LogicApp/Workflow'
+      Contents: '**'
+      TargetFolder: 'workflow_output'  
+  - ${{ each value in parameters.cxoNames }}:
+    - task: CopyFiles@2
+      displayName: 'Create Workflow Folder for ${{ value }}'
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)/workflow_output/ManageARecord'
+        Contents: '**'
+        TargetFolder: '$(System.DefaultWorkingDirectory)/workflow_output/${{ value }}'
+        OverWrite: true
+    -  script: |
+        pwd
+        ls -lrt      
+  - task: DeleteFiles@1
+    displayName: 'Delete Generic Workflow folder'
+    inputs:
+      SourceFolder: '$(System.DefaultWorkingDirectory)/workflow_output'
+      Contents: 'ManageARecord'
+  - ${{ each value in parameters.cxoNames }}:
+    - task: PowerShell@2
+      displayName: 'Replace CXO SPN details in Workflow'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $temp = "${{value}}" -Split "-"
+          $cxoName = $temp[1]
+          $content = Get-Content -Path 'workflow.json' -raw | ConvertFrom-Json
+          # $content.definition.actions.Get_CXO_Client_Secret.inputs
+          $content.definition.actions.Get_CXO_Client_ID.inputs.path = "/secrets/@{encodeURIComponent('SPN-" + $cxoName + "-ARecordLogicApp-cid')}/value"
+          $content.definition.actions.Get_CXO_Client_Secret.inputs.path = "/secrets/@{encodeURIComponent('SPN-" + $cxoName + "-ARecordLogicApp')}/value"
+          $content.definition.actions.Get_CXO_Tenant_ID.inputs.path = "/secrets/@{encodeURIComponent('" + $cxoName + "-TenantId')}/value"
+          $content | ConvertTo-Json -depth 32| Set-Content -Path 'workflow.json'
+        workingDirectory: '$(System.DefaultWorkingDirectory)/workflow_output/${{ value }}'
+  -  script: |
+        pwd
+        ls -lrt
+  - task: ArchiveFiles@2
+    displayName: 'Create project zip'
+    inputs:
+      rootFolderOrFile: '$(System.DefaultWorkingDirectory)/workflow_output'
+      includeRootFolder: false
+      archiveType: 'zip'
+      archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+      replaceExistingArchive: true
+  # - task: PublishPipelineArtifact@0
+  #   displayName: 'Publish project zip artifact'
+  #   inputs:
+  #     targetPath: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+  #     artifactName: '$(logicAppCIArtifactName)'
+  - task: PublishBuildArtifacts@1
+    inputs:
+      PathtoPublish: '$(Build.ArtifactStagingDirectory)' # string. Required. Path to publish. Default: $(Build.ArtifactStagingDirectory).
+      ArtifactName:  '$(logicAppCIArtifactName)' # string. Required. Artifact name. Default: drop.
+      publishLocation: 'Container'
+  - script: |
+      pwd
+      ls -lrt      
